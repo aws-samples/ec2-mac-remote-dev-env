@@ -1,0 +1,39 @@
+[
+    
+    {
+        "ParameterKey":"DS3BucketName",
+        "ParameterValue":"<YourS3BucketName>"
+    },
+    {
+        "ParameterKey":"DS3KeyPrefix",
+        "ParameterValue":""
+    },
+    {
+        "ParameterKey":"DS3BucketRegion",
+        "ParameterValue":"us-east-2"
+    },
+    {
+        "ParameterKey":"AvailabilityZones",
+        "ParameterValue":"us-east-2b,us-east-2c"
+    },
+    {
+        "ParameterKey":"DomainAdminPassword",
+        "ParameterValue":"<YourSecurePassword>"
+    },
+    {
+        "ParameterKey":"KeyPairName",
+        "ParameterValue":"mac-admin"
+    },
+    {
+        "ParameterKey":"MacImageID",
+        "ParameterValue":"<YourMacOSAmiID>"
+    },
+    {
+        "ParameterKey":"MacHost1",
+        "ParameterValue":"<MacHost1ID>"
+    },
+    {
+        "ParameterKey":"MacHost2",
+        "ParameterValue":"<MacHost1ID>"
+    }
+]
