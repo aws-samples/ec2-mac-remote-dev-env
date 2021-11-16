@@ -1,0 +1,225 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This template creates a bastion host that allows ssh forwarding based on keys 
+  stored in Active Directory.
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W9006
+        - E9101
+
+Parameters:
+  BastionHostSubnet:
+    Description: ID of the public subnet to launch the bastion host in (e.g., subnet-a0246dcd)
+    Type: AWS::EC2::Subnet::Id
+  BastionHostAmi:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  BastionHostInstanceType:
+    AllowedValues:
+      - t2.small
+      - t3.small
+      - t2.medium
+      - t3.medium
+      - t2.large
+      - t3.large
+    Default: t2.small
+    Description: Amazon EC2 instance type for the Bastion Host instance
+    Type: String
+  BastionHostNetBIOSName:
+    AllowedPattern: '[a-zA-Z0-9\-]+'
+    Default: BASTION01
+    Description: NetBIOS name of the Bastion Host Server (up to 15 characters)
+    MaxLength: '15'
+    MinLength: '1'
+    Type: String
+  DomainDNSName:
+    AllowedPattern: '[a-zA-Z0-9\-]+\..+'
+    Description: Fully qualified domain name (FQDN) of the forest root domain e.g. example.com
+    MaxLength: '255'
+    MinLength: '2'
+    Type: String
+  DomainNetBIOSName:
+    AllowedPattern: '[a-zA-Z0-9\-]+'
+    Description: NetBIOS name of the domain (up to 15 characters)
+    MaxLength: '15'
+    MinLength: '1'
+    Type: String
+  KeyPairName:
+    Description: Public/private key pairs allow you to securely connect to your instance after it launches
+    Type: AWS::EC2::KeyPair::KeyName
+  DomainJoinSecret:
+    Description: ARN of the secret to join the domain
+    Type: String
+  DomainJoinPolicy:
+    Description: ARN of the policy that provides access to the domain join secrets
+    Type: String
+  WindowsDomainMemberSG:
+    Description: Security group ID of Windows Domain instances
+    Type: String
+  VPCID:
+    Description: ID of the VPC (e.g., vpc-0343606e)
+    Type: AWS::EC2::VPC::Id
+
+
+Resources:
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "* required"
+    Properties:
+      Path: /
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy'
+        - !Ref DomainJoinPolicy
+      Tags:
+        - Key: StackName
+          Value: !Ref AWS::StackName
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+        Version: '2012-10-17'
+  InstanceProfile:
+      Type: AWS::IAM::InstanceProfile
+      Properties:
+        Roles:
+          - !Ref 'InstanceRole'
+        Path: /
+  BastionHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SSH
+      SecurityGroupIngress:
+      - CidrIp: 0.0.0.0/0
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
+      VpcId: !Ref VPCID
+  BastionHost:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+        Count: 1
+    Properties:
+      ImageId: !Ref 'BastionHostAmi'
+      IamInstanceProfile: !Ref 'InstanceProfile'
+      InstanceType: !Ref 'BastionHostInstanceType'
+      SubnetId: !Ref 'BastionHostSubnet'
+      Tags:
+        - Key: Name
+          Value: !Ref 'BastionHostNetBIOSName'
+        - Key: Domain
+          Value: !Ref 'DomainDNSName'
+      SecurityGroupIds:
+        - !Ref 'WindowsDomainMemberSG'
+        - !Ref 'BastionHostSecurityGroup'
+      KeyName: !Ref 'KeyPairName'
+      UserData: 
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -e
+            function exit_handler {
+              exit_status=$?
+              SUCCESS=false
+              if [ $exit_status -eq 0 ]; then
+                  SUCCESS=true
+              fi
+              # Signal success/failure back to CloudFormation wait condition
+              /opt/aws/bin/cfn-signal --success $SUCCESS --stack ${AWS::StackId} --resource BastionHost --region ${AWS::Region}
+            }
+            # Configure exit handler to signal script status back to CFN
+            trap "exit_handler" EXIT
+            # Get the latest CloudFormation package
+            yum update -y aws-cfn-bootstrap
+            yum -y install sssd realmd krb5-workstation samba-common-tools jq
+            # Set the hostname
+            HostnameCaseSensitive=${BastionHostNetBIOSName}
+            HostnameLowerCase=${!HostnameCaseSensitive,,}
+            FQDN=$HostnameLowerCase.${DomainDNSName}
+            hostnamectl set-hostname $FQDN
+            # Join the domain
+            PW=$(aws secretsmanager get-secret-value --region ${AWS::Region} --secret-id ${DomainJoinSecret} --query SecretString --output text | jq -r .awsSeamlessDomainPassword)
+            UN=$(aws secretsmanager get-secret-value --region ${AWS::Region} --secret-id ${DomainJoinSecret} --query SecretString --output text | jq -r .awsSeamlessDomainUsername)
+            echo $PW |realm join -U $UN ${DomainDNSName}
+            # Move original sshd_conf file. It will be replaced by cfn-init
+            mv /etc/ssh/sshd_config /etc/ssh/sshd_config.orig
+
+            # Change sssd.conf
+            sed '/services =/s/$/, ssh/' -i /etc/sssd/sssd.conf
+            sed '/default_shell/c\default_shell = /bin/bash' -i /etc/sssd/sssd.conf
+            sed '/use_fully_qualified_names/c\use_fully_qualified_names = False' -i /etc/sssd/sssd.conf
+            sed '/fallback_homedir/c\fallback_homedir = /home/%u' -i /etc/sssd/sssd.conf
+            cat <<EOT >> /etc/sssd/sssd.conf
+            ad_hostname = $FQDN
+            dyndns_update = true
+            ldap_user_extra_attrs = altSecurityIdentities:altSecurityIdentities
+            ldap_user_ssh_public_key = altSecurityIdentities
+            ldap_use_tokengroups = True
+            EOT
+
+            # Run cfn-init to create config files and scripts
+            /opt/aws/bin/cfn-init -s ${AWS::StackId} -r BastionHost --region ${AWS::Region}
+            # Restart Services
+            systemctl restart sssd.service sshd.service
+            # Trigger DNS
+            nslookup $FQDN
+    Metadata:
+      Comment: Setup Config files
+      AWS::CloudFormation::Init:
+        config:
+          files:
+            "/usr/bin/authorized-keys-command":
+              mode: '000700'
+              owner: root
+              group: root
+              content: |
+                #!/bin/bash
+                # Clear the sss cache to make it easier to troubleshoot for the Blof setup
+                /sbin/sss_cache -E
+                key=$(/usr/bin/sss_ssh_authorizedkeys $1)
+                echo "command=\"printf '############################################################\nNo ssh login allowed for AD users.\n############################################################\n' && /bin/false\",no-pty $key"
+            "/etc/ssh/sshd_config":
+              mode: '000600'
+              owner: root
+              group: root
+              content: |
+                HostKey /etc/ssh/ssh_host_rsa_key
+                HostKey /etc/ssh/ssh_host_ecdsa_key
+                HostKey /etc/ssh/ssh_host_ed25519_key
+                SyslogFacility AUTHPRIV
+                AuthorizedKeysFile .ssh/authorized_keys
+                PasswordAuthentication no
+                ChallengeResponseAuthentication no
+                GSSAPIAuthentication yes
+                GSSAPICleanupCredentials no
+                UsePAM yes
+                X11Forwarding yes
+                AcceptEnv LANG LC_CTYPE LC_NUMERIC LC_TIME LC_COLLATE LC_MONETARY LC_MESSAGES
+                AcceptEnv LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT
+                AcceptEnv LC_IDENTIFICATION LC_ALL LANGUAGE
+                AcceptEnv XMODIFIERS
+                Subsystem sftp	/usr/libexec/openssh/sftp-server
+                AuthorizedKeysCommand /usr/bin/authorized-keys-command
+                AuthorizedKeysCommandUser root
+            "/etc/environment":
+              content: |
+                LANG=en_US.UTF-8
+                LC_ALL=en_US.UTF-8
+
+Outputs:
+  BastionHostPublicDNS:
+    Description: Public DNS of bastion host
+    Value: !GetAtt BastionHost.PublicDnsName
+  BastionHostSecurityGroup:
+    Description: Security Group ID of bastion host SG
+    Value: !Ref BastionHostSecurityGroup

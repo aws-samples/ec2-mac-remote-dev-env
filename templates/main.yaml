@@ -1,0 +1,322 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This template deploys EC2 Mac instance and configures them as remote development environments
+  as described in this Blog Post: https://<blogpost-url>
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W9006
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Network configuration
+        Parameters:
+          - AvailabilityZones
+          - VPCCIDR
+          - DHCPOptionSet
+          - PrivateSubnet1CIDR
+          - PrivateSubnet2CIDR
+          - PublicSubnet1CIDR
+          - PublicSubnet2CIDR
+      - Label:
+          default: Amazon EC2 configuration
+        Parameters:
+          - KeyPairName
+      - Label:
+          default: Microsoft Active Directory configuration
+        Parameters:
+          - DomainDNSName
+          - DomainNetBIOSName
+          - DomainAdminPassword
+          - ADEdition
+      - Label:
+          default: Microsoft Windows Server management instance
+        Parameters:
+          - MgmtServerInstanceType
+          - MgmtDataDriveSizeGiB
+          - MgmtServerNetBIOSName
+      - Label:
+          default: Linux Bastion Host Instance
+        Parameters:
+          - BHInstanceType
+          - BHNetBIOSName
+      - Label:
+          default: Deployment Configuration
+        Parameters:
+          - DS3BucketName
+          - DS3BucketRegion
+          - DS3KeyPrefix
+      
+    ParameterLabels:
+      ADEdition:
+        default: AWS Microsoft AD Edition
+      AvailabilityZones:
+        default: Availability Zones
+      BHInstanceType:
+        default: Bastion Host Instance Type
+      BHNetBIOSName:
+        default: Bastion Host NetBIOS Name
+      DHCPOptionSet:
+        default: Create a DHCP Options set
+      DomainAdminPassword:
+        default: Admin Account Password
+      DomainDNSName:
+        default: Domain DNS Name
+      DomainNetBIOSName:
+        default: Domain NetBIOS Name
+      DS3BucketName:
+        default: Deployment S3 bucket name
+      DS3BucketRegion:
+        default: Deployment S3 bucket Region
+      DS3KeyPrefix:
+        default: Deployment S3 key prefix
+      KeyPairName:
+        default: Key Pair Name
+      MgmtDataDriveSizeGiB:
+        default: Data Drive Size
+      MgmtServerInstanceType:
+        default: Management Server Instance Type
+      MgmtServerNetBIOSName:
+        default: Management Server NetBIOS Name
+      PrivateSubnet1CIDR:
+        default: Private Subnet 1 CIDR
+      PrivateSubnet2CIDR:
+        default: Private Subnet 2 CIDR
+      PublicSubnet1CIDR:
+        default: Public Subnet 1 CIDR
+      PublicSubnet2CIDR:
+        default: Public Subnet 2 CIDR
+      VPCCIDR:
+        default: VPC CIDR
+Parameters:
+  ADEdition:
+    AllowedValues:
+      - Standard
+      - Enterprise
+    Default: Standard
+    Description: The AWS Microsoft AD Edition you wish to deploy
+    Type: String
+  AvailabilityZones:
+    Description:
+      'List of Availability Zones to use for the subnets in the VPC. Note: The logical order is preserved and only 2 AZs are used for this deployment'
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+  BHInstanceType:
+    AllowedValues:
+      - t2.small
+      - t3.small
+      - t2.medium
+      - t3.medium
+      - t2.large
+      - t3.large
+    Default: t2.small
+    Description: Amazon EC2 instance type for the Bastion Host Server
+    Type: String
+  BHNetBIOSName:
+    AllowedPattern: '[a-zA-Z0-9\-]+'
+    Default: BASTION
+    Description: NetBIOS name of the Bastion Host server (up to 15 characters)
+    MaxLength: '15'
+    MinLength: '1'
+    Type: String
+  DHCPOptionSet:
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+    Default: 'Yes'
+    Description: Do you want to create and apply a new DHCP Options Set
+    Type: String
+  DomainAdminPassword:
+    AllowedPattern: (?=^.{6,255}$)((?=.*\d)(?=.*[A-Z])(?=.*[a-z])|(?=.*\d)(?=.*[^A-Za-z0-9])(?=.*[a-z])|(?=.*[^A-Za-z0-9])(?=.*[A-Z])(?=.*[a-z])|(?=.*\d)(?=.*[A-Z])(?=.*[^A-Za-z0-9]))^.*
+    Description: Password for the Admin user account. Must be at least 8 characters containing letters, numbers and symbols
+    MaxLength: '32'
+    MinLength: '8'
+    NoEcho: 'true'
+    Type: String
+  DomainDNSName:
+    AllowedPattern: '[a-zA-Z0-9\-]+\..+'
+    Default: example.com
+    Description: Fully qualified domain name (FQDN) of the forest root domain e.g. example.com
+    MaxLength: '255'
+    MinLength: '2'
+    Type: String
+  DomainNetBIOSName:
+    AllowedPattern: '[a-zA-Z0-9\-]+'
+    Default: example
+    Description: NetBIOS name of the domain (upto 15 characters) for users of earlier versions of Windows e.g. EXAMPLE
+    MaxLength: '15'
+    MinLength: '1'
+    Type: String
+  DS3BucketName:
+    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$
+    ConstraintDescription:
+      Deployment bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-). It cannot start or end with a hyphen (-)
+    Default: blog-mac-ec2-multi-user
+    Description:
+      S3 bucket name for the deployment assets. Deployment bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-).
+      It cannot start or end with a hyphen (-)
+    Type: String
+  DS3BucketRegion:
+    Default: us-east-2
+    Description: The AWS Region where the deployment S3 bucket (DSS3BucketName) is hosted. When using your own bucket, you must specify this value
+    Type: String
+  DS3KeyPrefix:
+    AllowedPattern: ^[0-9a-zA-Z-/]*$
+    ConstraintDescription: Deployment key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-), and forward slash (/)
+    Default: ""
+    Description:
+      S3 key prefix for the deployment assets. Deployment key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-), and
+      forward slash (/)
+    Type: String
+  KeyPairName:
+    Description: Public/private key pairs allow you to securely connect to your instance after it launches
+    Type: AWS::EC2::KeyPair::KeyName
+  MacImageID:
+    Description: Machine Image ID to use for the MacOS instances
+    Type: AWS::EC2::Image::Id
+  MacHost1:
+    Description: ID of the dedicated bare metal mac host 1 (e.g. h-0ff768601cd761d81). Must be within AZ1
+    Type: String
+  MacHost2:
+    Description: ID of the dedicated bare metal mac host 2 (e.g. h-0ff768601cd761d81). Must be within AZ2
+    Type: String
+  MgmtDataDriveSizeGiB:
+    Default: '2'
+    Description: Size of the Managment Server Data Drive in GiB
+    Type: Number
+  MgmtServerInstanceType:
+    AllowedValues:
+      - t2.small
+      - t3.small
+      - t2.medium
+      - t3.medium
+      - t2.large
+      - t3.large
+    Default: t3.medium
+    Description: Amazon EC2 instance type for the Management Server
+    Type: String
+  MgmtServerNetBIOSName:
+    AllowedPattern: '[a-zA-Z0-9\-]+'
+    Default: MGMT01
+    Description: NetBIOS name of the Management Server server (up to 15 characters)
+    MaxLength: '15'
+    MinLength: '1'
+    Type: String
+  PrivateSubnet1CIDR:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.0.0/19
+    Description: CIDR block for private subnet 1 located in Availability Zone 1
+    Type: String
+  PrivateSubnet2CIDR:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.32.0/19
+    Description: CIDR block for private subnet 2 located in Availability Zone 2
+    Type: String
+  PublicSubnet1CIDR:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.128.0/20
+    Description: CIDR Block for the public subnet 1 located in Availability Zone 1
+    Type: String
+  PublicSubnet2CIDR:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.144.0/20
+    Description: CIDR Block for the public subnet 2 located in Availability Zone 2
+    Type: String
+  VPCCIDR:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 10.0.0.0/16
+    Description: CIDR Block for the VPC
+    Type: String
+
+Resources:
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${DS3BucketName}.s3.${DS3BucketRegion}.${AWS::URLSuffix}/${DS3KeyPrefix}submodules/quickstart-aws-vpc/templates/aws-vpc.template.yaml'
+      Parameters:
+        AvailabilityZones: !Join [',', !Ref 'AvailabilityZones']
+        NumberOfAZs: 2
+        PrivateSubnet1ACIDR: !Ref 'PrivateSubnet1CIDR'
+        PrivateSubnet2ACIDR: !Ref 'PrivateSubnet2CIDR'
+        PublicSubnet1CIDR: !Ref 'PublicSubnet1CIDR'
+        PublicSubnet2CIDR: !Ref 'PublicSubnet2CIDR'
+        VPCCIDR: !Ref 'VPCCIDR'
+  ADStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${DS3BucketName}.s3.${DS3BucketRegion}.${AWS::URLSuffix}/${DS3KeyPrefix}submodules/quickstart-microsoft-activedirectory/templates/ad-3.template.yaml'
+      Parameters:
+        ADEdition: !Ref 'ADEdition'
+        DHCPOptionSet: !Ref 'DHCPOptionSet'
+        DomainAdminPassword: !Ref 'DomainAdminPassword'
+        DomainDNSName: !Ref 'DomainDNSName'
+        DomainNetBIOSName: !Ref 'DomainNetBIOSName'
+        KeyPairName: !Ref 'KeyPairName'
+        MgmtDataDriveSizeGiB: !Ref 'MgmtDataDriveSizeGiB'
+        MgmtServer: 'true'
+        MgmtServerInstanceType: !Ref 'MgmtServerInstanceType'
+        MgmtServerNetBIOSName: !Ref 'MgmtServerNetBIOSName'
+        NonWindowsDomainJoin: 'true'
+        PKI: 'No'
+        PrivateSubnet1ID: !GetAtt 'VPCStack.Outputs.PrivateSubnet1AID'
+        PrivateSubnet2ID: !GetAtt 'VPCStack.Outputs.PrivateSubnet2AID'
+        QSS3BucketName: !Ref 'DS3BucketName'
+        QSS3BucketRegion: !Ref 'DS3BucketRegion'
+        QSS3KeyPrefix: !Sub ${DS3KeyPrefix}submodules/quickstart-microsoft-activedirectory/
+        UseS3ForCRL: 'No'
+        VPCCIDR: !Ref 'VPCCIDR'
+        VPCID: !GetAtt 'VPCStack.Outputs.VPCID'
+  BHStack:        
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${DS3BucketName}.s3.${DS3BucketRegion}.${AWS::URLSuffix}/${DS3KeyPrefix}templates/bastion-host.yaml'
+      Parameters:
+        WindowsDomainMemberSG: !GetAtt 'ADStack.Outputs.DomainMemberSGID'
+        BastionHostSubnet: !GetAtt  'VPCStack.Outputs.PublicSubnet1ID'
+        BastionHostInstanceType: !Ref BHInstanceType
+        BastionHostNetBIOSName:  !Ref BHNetBIOSName
+        DomainNetBIOSName: !Ref DomainNetBIOSName
+        DomainDNSName: !Ref DomainDNSName
+        KeyPairName: !Ref KeyPairName
+        DomainJoinPolicy: !GetAtt 'ADStack.Outputs.NonWindowsDomainJoinPolicy'
+        DomainJoinSecret: !GetAtt 'ADStack.Outputs.NonWindowsDomainJoinSecrets'
+        VPCID: !GetAtt 'VPCStack.Outputs.VPCID'
+  DevStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${DS3BucketName}.s3.${DS3BucketRegion}.${AWS::URLSuffix}/${DS3KeyPrefix}templates/dev-environment.yaml'
+      Parameters:
+        AvailabilityZones: !Join [',', !Ref 'AvailabilityZones']
+        PrivateSubnet1ID: !GetAtt 'VPCStack.Outputs.PrivateSubnet1AID'
+        PrivateSubnet2ID: !GetAtt 'VPCStack.Outputs.PrivateSubnet2AID'
+        MacHost1: !Ref MacHost1
+        MacHost2: !Ref MacHost2
+        MacInstance1NetBIOSName: 'MACOS1'
+        MacInstance2NetBIOSName: 'MACOS2'
+        MacImageID: !Ref MacImageID
+        DomainDNSName: !Ref DomainDNSName
+        DomainNetBIOSName: !Ref DomainNetBIOSName
+        KeyPairName: !Ref KeyPairName
+        DS3BucketName: !Ref 'DS3BucketName'
+        DS3BucketRegion: !Ref 'DS3BucketRegion'
+        DS3KeyPrefix: !Sub ${DS3KeyPrefix}
+        DomainJoinPolicy: !GetAtt 'ADStack.Outputs.NonWindowsDomainJoinPolicy'
+        DomainJoinSecret: !GetAtt 'ADStack.Outputs.NonWindowsDomainJoinSecrets'
+        BastionHostSG: !GetAtt 'BHStack.Outputs.BastionHostSecurityGroup'
+        VPCID: !GetAtt 'VPCStack.Outputs.VPCID'
+
+Outputs:
+  BastionHostPublicDNS:
+    Description: Public DNS of bastion host
+    Value: !GetAtt 'BHStack.Outputs.BastionHostPublicDNS'
+  MacInstance1PrivateIp:
+    Description: Private IP address of the Mac EC2 instance 1 in the first AZ
+    Value: !GetAtt 'DevStack.Outputs.MacInstance1PrivateIp'
+  MacInstance2PrivateIp:
+    Description: Private IP address of the Mac EC2 instance 2 in the second AZ
+    Value: !GetAtt 'DevStack.Outputs.MacInstance2PrivateIp'

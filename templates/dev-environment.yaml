@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  This template creates two EC2 Mac instances and an EFS file system that gets mounted on the instances.
+  For centralized access management, the instances join the Active Directory that is provided with template parameters.
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W9006
+        - E9101
+
+Parameters:
+  AvailabilityZones:
+    Description:
+      'List of Availability Zones to use for the subnets in the VPC. Note: The logical order is preserved and only 2 AZs are used for this deployment'
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+  PrivateSubnet1ID:
+    Description: ID of  subnet 1 in Availability Zone 1 (e.g., subnet-a0246dcd)
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet2ID:
+    Description: ID of  subnet 2 in Availability Zone 2 (e.g., subnet-a0246dcd)
+    Type: AWS::EC2::Subnet::Id
+  MacHost1:
+    Description: ID of the dedicated bare metal mac host 1 (e.g. h-0ff768601cd761d81). Must be within AZ1
+    Type: String
+  MacHost2:
+    Description: ID of the dedicated bare metal mac host 2 (e.g. h-0ff768601cd761d81). Must be within AZ2
+    Type: String
+  MacInstance1NetBIOSName:
+    Default: 'MACOS1'
+    Type: 'String'
+  MacInstance2NetBIOSName:
+    Default: 'MACOS2'
+    Type: 'String'
+  MacImageID:
+    Default: 'ami-023e2c495779a6b1e'
+    Type: AWS::EC2::Image::Id
+  DomainDNSName:
+    AllowedPattern: '[a-zA-Z0-9\-]+\..+'
+    Description: Fully qualified domain name (FQDN) of the forest root domain e.g. example.com
+    MaxLength: '255'
+    MinLength: '2'
+    Type: String
+  DomainNetBIOSName:
+    AllowedPattern: '[a-zA-Z0-9\-]+'
+    Description: NetBIOS name of the domain (up to 15 characters)
+    MaxLength: '15'
+    MinLength: '1'
+    Type: String
+  KeyPairName:
+    Description: Public/private key pairs allow you to securely connect to your instance after it launches
+    Type: AWS::EC2::KeyPair::KeyName
+  DS3BucketName:
+    AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$
+    ConstraintDescription:
+      Deployment bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-). It cannot start or end with a hyphen (-)
+    Default: blog-mac-ec2-multi-user
+    Description:
+      S3 bucket name for the deployment assets. Deployment bucket name can include numbers, lowercase letters, uppercase letters, and hyphens (-).
+      It cannot start or end with a hyphen (-)
+    Type: String
+  DS3BucketRegion:
+    Default: us-east-2
+    Description: The AWS Region where the deployment S3 bucket (DSS3BucketName) is hosted. When using your own bucket, you must specify this value
+    Type: String
+  DS3KeyPrefix:
+    AllowedPattern: ^[0-9a-zA-Z-/]*$
+    ConstraintDescription: Deployment key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-), and forward slash (/)
+    Default: ""
+    Description:
+      S3 key prefix for the deployment assets. Deployment key prefix can include numbers, lowercase letters, uppercase letters, hyphens (-), and
+      forward slash (/)
+    Type: String
+  DomainJoinSecret:
+    Description: ARN of the secret to join the domain
+    Type: String
+  DomainJoinPolicy:
+    Description: ARN of the policy that provides access to the domain join secrets
+    Type: String
+  BastionHostSG:
+    Description: Security group ID of the Bastion Host
+    Type: AWS::EC2::SecurityGroup::Id
+  VPCID:
+    Description: ID of the VPC (e.g., vpc-0343606e)
+    Type: AWS::EC2::VPC::Id
+
+Resources:
+  
+  MacInstanceRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "* required"
+    Properties:
+      Path: /
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy'
+        - !Ref DomainJoinPolicy
+      Tags:
+        - Key: StackName
+          Value: !Ref AWS::StackName
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+        Version: '2012-10-17'
+  MacInstanceProfile:
+      Type: AWS::IAM::InstanceProfile
+      Properties:
+        Roles:
+          - !Ref 'MacInstanceRole'
+        Path: /
+  MacSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SSH from BH, everything from other Mac Hosts
+      VpcId: !Ref 'VPCID'
+      Tags:
+        - Key: Name
+          Value: MacSecurityGroup
+  MacIngressSSH:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow SSH from bastion host
+      GroupId: !Ref MacSG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref BastionHostSG
+  MacIngressDefault:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow all traffic from other Mac Hosts
+      GroupId: !Ref MacSG
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !Ref MacSG
+  EFSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow NFS from Mac SG
+      SecurityGroupIngress:
+      - SourceSecurityGroupId: !Ref MacSG
+        FromPort: 2049
+        ToPort: 2049
+        IpProtocol: tcp
+      VpcId: !Ref VPCID
+  FileSystem:
+    Type: 'AWS::EFS::FileSystem'
+    Properties:
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub MacOS-Home-${DomainDNSName}
+  MountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref PrivateSubnet1ID
+      SecurityGroups:
+      - !Ref EFSSG
+  MountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref PrivateSubnet2ID
+      SecurityGroups:
+      - !Ref EFSSG
+  MacInstanceStack1:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${DS3BucketName}.s3.${DS3BucketRegion}.${AWS::URLSuffix}/${DS3KeyPrefix}templates/mac-instance.yaml'
+      Parameters:
+        SubnetID: !Ref PrivateSubnet1ID
+        MacHost: !Ref MacHost1
+        MacInstanceNetBIOSName: !Ref MacInstance1NetBIOSName
+        MacImageID: !Ref MacImageID
+        DomainDNSName: !Ref DomainDNSName
+        DomainNetBIOSName: !Ref DomainNetBIOSName
+        KeyPairName: !Ref KeyPairName
+        DomainJoinSecret: !Ref DomainJoinSecret
+        MacSG: !Ref MacSG
+        MacInstanceProfile: !Ref MacInstanceProfile
+        EFSID: !Ref FileSystem
+  MacInstanceStack2:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${DS3BucketName}.s3.${DS3BucketRegion}.${AWS::URLSuffix}/${DS3KeyPrefix}templates/mac-instance.yaml'
+      Parameters:
+        SubnetID: !Ref PrivateSubnet2ID
+        MacHost: !Ref MacHost2
+        MacInstanceNetBIOSName: !Ref MacInstance2NetBIOSName
+        MacImageID: !Ref MacImageID
+        DomainDNSName: !Ref DomainDNSName
+        DomainNetBIOSName: !Ref DomainNetBIOSName
+        KeyPairName: !Ref KeyPairName
+        DomainJoinSecret: !Ref DomainJoinSecret
+        MacSG: !Ref MacSG
+        MacInstanceProfile: !Ref MacInstanceProfile
+        EFSID: !Ref FileSystem
+
+Outputs:
+  MacSG:
+    Description: Security Group for Mac Instances
+    Value: !Ref MacSG
+  MacInstance1PrivateIp:
+    Description: Private IP address of the Mac EC2 instance 1 in the first AZ
+    Value: !GetAtt 'MacInstanceStack1.Outputs.MacInstancePrivateIp'
+  MacInstance2PrivateIp:
+    Description: Private IP address of the Mac EC2 instance 2 in the second AZ
+    Value: !GetAtt 'MacInstanceStack2.Outputs.MacInstancePrivateIp'
