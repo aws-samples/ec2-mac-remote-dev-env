@@ -122,7 +122,7 @@ First, we create a new SSH key for the developer Active Directory user. Utilize 
 ```shell
 ssh-keygen -f ~/.ssh/mac-developer
 ```
-Furthermore, utilizing the connection information from the CloudFormation, setup your `~/.ssh/config` to contain the following entries, where `$BASTION_HOST_PUBLIC_DNS`, `$MAC1_PRIVATE_IP` and `$MAC2_PRIVATE_IP` must be replaced with the CloudFormation output
+Furthermore, utilizing the connection information from the CloudFormation output, setup your `~/.ssh/config` to contain the following entries, where `$BASTION_HOST_PUBLIC_DNS`, `$MAC1_PRIVATE_IP` and `$MAC2_PRIVATE_IP` must be replaced accordingly.
 ```ssh-config
 Host bastion
   HostName $BASTION_HOST_PUBLIC_DNS
@@ -161,12 +161,12 @@ Now that the `developer` account is setup, you can connect to either of the two 
 ```shell
 ssh macos1
 ```
-When you connect via the preceding command, your local machine first establishes an SSH connection to the bastion host which authorizes the request against the key we just stored in Active Directory. Upon success, the bastion host forwards the connection to the `macos1` instance, which again authorizes against Active Directory and launches a  terminal session upon success. The following figure illustrates the login with the macos1 instances, showcasing both the integration with AD (`EXAMPLE\Domain Users group membership`) as well as with the EFS share, which is mounted at `/opt/nfsshare` and symlinked to the developer’s home directory.
+When you connect via the preceding command, your local machine first establishes an SSH connection to the bastion host which authorizes the request against the key we just stored in Active Directory. Upon success, the bastion host forwards the connection to the `macos1` instance, which again authorizes against Active Directory and launches a  terminal session upon success. The following figure illustrates the login with the macos1 instance, showcasing both the integration with AD (`EXAMPLE\Domain Users` group membership) as well as with the EFS share, which is mounted at `/opt/nfsshare` and symlinked to the developer’s home directory.
 ![Terminal window when logged in to the macos1 host](doc/macos1_login.png)
 Likewise, you can create folders and files in the developer’s home directory such as the `test-project` folder depicted in the screenshot.
-Lastly, let’s utilize [VS Code’s remote plugin](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.vscode-remote-extensionpack) in order to connect to the other `macos2` instance and confirm that we have access to the same files seen previously on the `macos1` host. Select the Remote Explorer on the left-hand pane and click to open the `macos2` host as shown in the following screenshot.
+Lastly, let’s utilize [VS Code’s remote plugin](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.vscode-remote-extensionpack) and connect to the other `macos2` instance. Select the Remote Explorer on the left-hand pane and click to open the `macos2` host as shown in the following screenshot.
 ![Connecting to the macos2 instance in VSCode](doc/vscode_macos2_initiate.png)
-A new window will be opened with the context of the remote server, as shown in the next figure.
+A new window will be opened with the context of the remote `macos2` server, as shown in the next figure. As you can see, we have access to the same files seen previously on the `macos1` host.
 ![VSCode when connected to the macos2 instance](doc/vscode_macos2.png)
 
 ## Cleanup
