@@ -184,7 +184,7 @@ Resources:
               group: root
               content: |
                 #!/bin/bash
-                # Clear the sss cache to make it easier to troubleshoot for the Blof setup
+                # Clear the sss cache to make it easier to troubleshoot for the blog post setup
                 /sbin/sss_cache -E
                 key=$(/usr/bin/sss_ssh_authorizedkeys $1)
                 echo "command=\"printf '############################################################\nNo ssh login allowed for AD users.\n############################################################\n' && /bin/false\",no-pty $key"

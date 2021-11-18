@@ -5,6 +5,7 @@ STACK_NAME=$1
 echo "Deleting the CloudFormation stack $STACK_NAME"
 aws cloudformation delete-stack \
     --stack-name $STACK_NAME
+echo ""
 
 if [[  -f .bucketconfig ]]; then
     source .bucketconfig

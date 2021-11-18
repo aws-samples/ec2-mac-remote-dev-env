@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  This template deploys EC2 Mac instance and configures them as remote development environments
-  as described in this Blog Post: https://<blogpost-url>
+  This template deploys EC2 Mac instances and configures them as remote development environments
+  as described in this Blog Post: https://aws.amazon.com/blogs/compute/setting-up-ec2-mac-instances-as-shared-remote-development-environments/
 Metadata:
   cfn-lint:
     config:
